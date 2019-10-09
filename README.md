@@ -5,6 +5,9 @@
  
 # To-do
  Code cleanup and modularization
+
  Figure of image classification over CIFAR-10 upload
+
  Comment cleanup
+ 
  Paper Summary
