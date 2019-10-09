@@ -49,9 +49,9 @@ test_transform = T.Compose([
     T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
 ])
 
-cifar10_train = CIFAR10('./cifar10', train=True, download=True, transform=train_transform)
-cifar10_unlabeled   = CIFAR10('./cifar10', train=True, download=True, transform=test_transform)
-cifar10_test  = CIFAR10('./cifar10', train=False, download=True, transform=test_transform)
+cifar10_train = CIFAR10('../cifar10', train=True, download=True, transform=train_transform)
+cifar10_unlabeled   = CIFAR10('../cifar10', train=True, download=True, transform=test_transform)
+cifar10_test  = CIFAR10('../cifar10', train=False, download=True, transform=test_transform)
 
 # train_loader = keep changing
 test_loader  = DataLoader(cifar10_test, batch_size=BATCH)
@@ -196,8 +196,8 @@ def get_uncertainty(models, unlabeled_loader):
             labels = labels.cuda()
 
             scores, features = models['backbone'](inputs)
-            #pred_loss = models['module'](features)
-            pred_loss = criterion(scores, labels)
+            pred_loss = models['module'](features)
+            #pred_loss = criterion(scores, labels) # ground truth loss
             pred_loss = pred_loss.view(pred_loss.size(0))
 
             uncertainty = torch.cat((uncertainty, pred_loss), 0)
@@ -223,14 +223,25 @@ if __name__ == '__main__':
                                           sampler=SubsetRandomSampler(labeled_set), 
                                           pin_memory=True)
         dataloaders = {'train': train_loader, 'test': test_loader}
+        ##
+        # Model
+        
+        resnet18    = resnet.ResNet18().cuda()
+        loss_module = lossnet.LossNet().cuda()
+        models = {'backbone': resnet18, 'module': loss_module}
+        torch.backends.cudnn.benchmark = True
+        
 
         for cycle in range(CYCLES):
+
             ##
             # Model
+            """
             resnet18    = resnet.ResNet18().cuda()
             loss_module = lossnet.LossNet().cuda()
             models = {'backbone': resnet18, 'module': loss_module}
             torch.backends.cudnn.benchmark = True
+            """
 
             ##
             # Loss, Criterion and Scheduler Initialization
@@ -251,7 +262,7 @@ if __name__ == '__main__':
             # Training and Testing
             train(models, criterion, optimizers, schedulers, dataloaders, EPOCH, EPOCHL, vis, plot_data)
             acc = test(models, dataloaders, mode='test')
-            print('Trial {} || Cycle {} || Label set size {}: Test acc {}'.format(trial+1, cycle+1, len(labeled_set), acc))
+            print('Trial {}/{} || Cycle {}/{} || Label set size {}: Test acc {}'.format(trial+1, TRIALS, cycle+1, CYCLES, len(labeled_set), acc))
 
             ##
             # Update the Labeled Dataset via Loss Prediction-based Uncertainty Measurement
