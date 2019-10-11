@@ -6,7 +6,6 @@ Reference:
 
 # Python
 import os
-import sys
 import random
 
 # Torch
@@ -17,22 +16,21 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data.sampler import SubsetRandomSampler
-from data.sampler import SubsetSequentialSampler
 
 # Torchvison
 import torchvision.transforms as T
 import torchvision.models as models
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import CIFAR100, CIFAR10
 
 # Utils
 import visdom
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 # Custom
 import models.resnet as resnet
 import models.lossnet as lossnet
 from config import *
+from data.sampler import SubsetSequentialSampler
 
 
 ##
@@ -41,20 +39,17 @@ train_transform = T.Compose([
     T.RandomHorizontalFlip(),
     T.RandomCrop(size=32, padding=4),
     T.ToTensor(),
-    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010]) # T.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)) # CIFAR-100
 ])
 
 test_transform = T.Compose([
     T.ToTensor(),
-    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])
+    T.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010]) # T.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)) # CIFAR-100
 ])
 
 cifar10_train = CIFAR10('../cifar10', train=True, download=True, transform=train_transform)
 cifar10_unlabeled   = CIFAR10('../cifar10', train=True, download=True, transform=test_transform)
 cifar10_test  = CIFAR10('../cifar10', train=False, download=True, transform=test_transform)
-
-# train_loader = keep changing
-test_loader  = DataLoader(cifar10_test, batch_size=BATCH)
 
 
 ##
@@ -81,7 +76,7 @@ def LossPredLoss(input, target, margin=1.0, reduction='mean'):
 
 
 ##
-# Train
+# Train Utils
 iters = 0
 
 #
@@ -99,8 +94,8 @@ def train_epoch(models, criterion, optimizers, dataloaders, epoch, epoch_loss, v
         optimizers['module'].zero_grad()
 
         scores, features = models['backbone'](inputs)
-
         target_loss = criterion(scores, labels)
+
         if epoch > epoch_loss:
             # After 120 epochs, stop the gradient from the loss prediction module propagated to the target model.
             features[0] = features[0].detach()
@@ -118,6 +113,7 @@ def train_epoch(models, criterion, optimizers, dataloaders, epoch, epoch_loss, v
         optimizers['backbone'].step()
         optimizers['module'].step()
 
+        # Visualize
         if (iters % 100 == 0) and (vis != None) and (plot_data != None):
             plot_data['X'].append(iters)
             plot_data['Y'].append([
@@ -132,7 +128,7 @@ def train_epoch(models, criterion, optimizers, dataloaders, epoch, epoch_loss, v
                     'title': 'Loss over Time',
                     'legend': plot_data['legend'],
                     'xlabel': 'Iterations',
-                    'ylabel': 'Loss or Acc',
+                    'ylabel': 'Loss',
                     'width': 1200,
                     'height': 390,
                 },
@@ -170,7 +166,10 @@ def train(models, criterion, optimizers, schedulers, dataloaders, num_epochs, ep
     for epoch in range(num_epochs):
         schedulers['backbone'].step()
         schedulers['module'].step()
+
         train_epoch(models, criterion, optimizers, dataloaders, epoch, epoch_loss, vis, plot_data)
+
+        # Save a checkpoint
         if False and epoch % 5 == 4:
             acc = test(models, dataloaders, 'test')
             if best_acc < acc:
@@ -193,11 +192,10 @@ def get_uncertainty(models, unlabeled_loader):
     with torch.no_grad():
         for (inputs, labels) in unlabeled_loader:
             inputs = inputs.cuda()
-            labels = labels.cuda()
+            # labels = labels.cuda()
 
             scores, features = models['backbone'](inputs)
-            pred_loss = models['module'](features)
-            #pred_loss = criterion(scores, labels) # ground truth loss
+            pred_loss = models['module'](features) # pred_loss = criterion(scores, labels) # ground truth loss
             pred_loss = pred_loss.view(pred_loss.size(0))
 
             uncertainty = torch.cat((uncertainty, pred_loss), 0)
@@ -212,39 +210,27 @@ if __name__ == '__main__':
     plot_data = {'X': [], 'Y': [], 'legend': ['Backbone Loss', 'Module Loss', 'Total Loss']}
 
     for trial in range(TRIALS):
-        ##
-        # Initialize a labeled dataset by randomly sampling K=1,000 data points from the entire dataset.
+        # Initialize a labeled dataset by randomly sampling K=ADDENDUM=1,000 data points from the entire dataset.
         indices = list(range(NUM_TRAIN))
         random.shuffle(indices)
         labeled_set = indices[:ADDENDUM]
         unlabeled_set = indices[ADDENDUM:]
-
+        
         train_loader = DataLoader(cifar10_train, batch_size=BATCH, 
-                                          sampler=SubsetRandomSampler(labeled_set), 
-                                          pin_memory=True)
-        dataloaders = {'train': train_loader, 'test': test_loader}
-        ##
+                                  sampler=SubsetRandomSampler(labeled_set), 
+                                  pin_memory=True)
+        test_loader  = DataLoader(cifar10_test, batch_size=BATCH)
+        dataloaders  = {'train': train_loader, 'test': test_loader}
+        
         # Model
-        
-        resnet18    = resnet.ResNet18().cuda()
+        resnet18    = resnet.ResNet18(num_classes=10).cuda()
         loss_module = lossnet.LossNet().cuda()
-        models = {'backbone': resnet18, 'module': loss_module}
+        models      = {'backbone': resnet18, 'module': loss_module}
         torch.backends.cudnn.benchmark = True
-        
 
+        # Active learning cycles
         for cycle in range(CYCLES):
-
-            ##
-            # Model
-            """
-            resnet18    = resnet.ResNet18().cuda()
-            loss_module = lossnet.LossNet().cuda()
-            models = {'backbone': resnet18, 'module': loss_module}
-            torch.backends.cudnn.benchmark = True
-            """
-
-            ##
-            # Loss, Criterion and Scheduler Initialization
+            # Loss, criterion and scheduler (re)initialization
             criterion      = nn.CrossEntropyLoss(reduction='none')
             optim_backbone = optim.SGD(models['backbone'].parameters(), lr=LR, 
                                     momentum=MOMENTUM, weight_decay=WDECAY)
@@ -253,42 +239,42 @@ if __name__ == '__main__':
             sched_backbone = lr_scheduler.MultiStepLR(optim_backbone, milestones=MILESTONES)
             sched_module   = lr_scheduler.MultiStepLR(optim_module, milestones=MILESTONES)
 
-            #models = {'backbone': resnet18, 'module': loss_module}
             optimizers = {'backbone': optim_backbone, 'module': optim_module}
             schedulers = {'backbone': sched_backbone, 'module': sched_module}
-            #dataloaders = {'train': train_loader, 'val': val_loader, 'test': test_loader}
 
-            ##
-            # Training and Testing
+            # Training and test
             train(models, criterion, optimizers, schedulers, dataloaders, EPOCH, EPOCHL, vis, plot_data)
             acc = test(models, dataloaders, mode='test')
             print('Trial {}/{} || Cycle {}/{} || Label set size {}: Test acc {}'.format(trial+1, TRIALS, cycle+1, CYCLES, len(labeled_set), acc))
 
             ##
-            # Update the Labeled Dataset via Loss Prediction-based Uncertainty Measurement
+            #  Update the labeled dataset via loss prediction-based uncertainty measurement
+
+            # Randomly sample 10000 unlabeled data points
             random.shuffle(unlabeled_set)
             subset = unlabeled_set[:SUBSET]
+
+            # Create unlabeled dataloader for the unlabeled subset
             unlabeled_loader = DataLoader(cifar10_unlabeled, batch_size=BATCH, 
-                                          sampler=SubsetSequentialSampler(subset), 
+                                          sampler=SubsetSequentialSampler(subset), # more convenient if we maintain the order of subset
                                           pin_memory=True)
-            uncertainty = get_uncertainty(models, unlabeled_loader) #torch.rand(SUBSET)#
+
+            # Measure uncertainty of each data points in the subset
+            uncertainty = get_uncertainty(models, unlabeled_loader)
+
+            # Index in ascending order
             arg = np.argsort(uncertainty)
-            assert len(uncertainty) == 10000
             
+            # Update the labeled dataset and the unlabeled dataset, respectively
             labeled_set += list(torch.tensor(subset)[arg][-ADDENDUM:].numpy())
             unlabeled_set = list(torch.tensor(subset)[arg][:-ADDENDUM].numpy()) + unlabeled_set[SUBSET:]
 
-            assert len(labeled_set) % 1000 == 0
-            assert len(set(labeled_set)) == len(labeled_set)
-            assert len(set(unlabeled_set)) == len(unlabeled_set)
-            assert len(labeled_set) + len(unlabeled_set) == 50000
-            assert len(set(labeled_set).intersection(set(unlabeled_set))) == 0
-            assert len(set(labeled_set).intersection(set(subset))) == 1000
-
+            # Create a new dataloader for the updated labeled dataset
             dataloaders['train'] = DataLoader(cifar10_train, batch_size=BATCH, 
                                               sampler=SubsetRandomSampler(labeled_set), 
                                               pin_memory=True)
         
+        # Save a checkpoint
         torch.save({
                     'trial': trial + 1,
                     'state_dict_backbone': models['backbone'].state_dict(),

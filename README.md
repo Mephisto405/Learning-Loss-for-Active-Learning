@@ -1,13 +1,24 @@
 # Learning Loss for Active Learning
  Reproducing experimental results of LL4AL [Yoo et al. 2019 CVPR]
 
- Successfully reproduced the experimental results.
- 
-# To-do
- Code cleanup and modularization
+# Reproduced Results
+ ![Results](./results.PNG)
 
- Figure of image classification over CIFAR-10 upload
+# Requirements
+ torch >= 1.1.0
 
- Comment cleanup
- 
- Paper Summary
+ numpy >= 1.16.2
+
+ tqdm >= 4.31.1
+
+ visdom >= 0.1.8.8
+
+# To Activate Visdom Server
+  visdom -port 9000
+
+  or 
+
+  python -m visdom.server -port 9000
+
+# Contact
+ ciy405x@kaist.ac.kr
