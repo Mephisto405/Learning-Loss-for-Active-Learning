@@ -32,6 +32,10 @@ import models.lossnet as lossnet
 from config import *
 from data.sampler import SubsetSequentialSampler
 
+# Seed
+random.seed("Inyoung Cho")
+torch.manual_seed(0)
+torch.backends.cudnn.deterministic = True
 
 ##
 # Data
@@ -226,7 +230,7 @@ if __name__ == '__main__':
         resnet18    = resnet.ResNet18(num_classes=10).cuda()
         loss_module = lossnet.LossNet().cuda()
         models      = {'backbone': resnet18, 'module': loss_module}
-        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = False
 
         # Active learning cycles
         for cycle in range(CYCLES):
